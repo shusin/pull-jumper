@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -159,65 +160,64 @@ const WarcraftLogsToYoutubeConverter = () => {
       // Split text into lines
       const lines = text.split('\n');
       const parsedEntries: TimestampEntry[] = [];
+      let currentEntry: Partial<TimestampEntry> = {};
       
-      // Regular expression to match time patterns like "20:15:30" or "8:45:12"
-      const timeRegex = /(\d{1,2}):(\d{2}):(\d{2})/;
+      // Regular expressions to match patterns
+      const pullNumberRegex = /^(\d+)\s+\((\d+):(\d+)\)/;  // Matches "1  (3:24)"
+      const timeRegex = /(\d+):(\d+)\s+(AM|PM)/;  // Matches "7:46 PM"
+      const phaseRegex = /(P\d+|I\d+)/;  // Matches "P2" or "I1" etc.
       
-      // Process each line
+      // Loop through lines to collect information
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         
         // Skip empty lines
         if (!line) continue;
         
-        // Look for time pattern
+        // Check for pull time (e.g., 7:46 PM)
         const timeMatch = line.match(timeRegex);
         if (timeMatch) {
-          let pullName = "";
+          let hour = parseInt(timeMatch[1]);
+          const minute = timeMatch[2];
+          const ampm = timeMatch[3];
           
-          // Extract hours, minutes, seconds and ensure proper formatting
-          const hours = timeMatch[1].padStart(2, '0');
-          const minutes = timeMatch[2];
-          const seconds = timeMatch[3];
-          const timeString = `${hours}:${minutes}:${seconds}`;
+          // Convert to 24-hour format
+          if (ampm === "PM" && hour < 12) hour += 12;
+          if (ampm === "AM" && hour === 12) hour = 0;
           
-          // Look for potential pull name in the line
-          // First try to extract pull name before the time
-          const beforeTime = line.split(timeMatch[0])[0].trim();
-          // Then try after the time
-          const afterTime = line.split(timeMatch[0])[1]?.trim() || "";
+          // Format the time in HH:mm:ss
+          const timeString = `${hour.toString().padStart(2, '0')}:${minute}:00`;
           
-          // Choose the most likely pull name section
-          if (beforeTime.length > 0 && beforeTime.length <= 50) {
-            // If text before time is reasonable length, use it
-            pullName = beforeTime;
-          } else if (afterTime.length > 0 && afterTime.length <= 50) {
-            // Otherwise use text after time if it exists and is reasonable
-            pullName = afterTime;
-          } else {
-            // If no good name found, use a generic name
-            pullName = `Pull ${parsedEntries.length + 1}`;
+          // If we have an incomplete entry, add the time
+          if (currentEntry.name) {
+            currentEntry.pullTime = timeString;
+            currentEntry.id = Date.now() + i.toString();
+            
+            // Add the complete entry
+            parsedEntries.push(currentEntry as TimestampEntry);
+            currentEntry = {};
           }
+        }
+        
+        // Check for pull number and duration
+        const pullMatch = line.match(pullNumberRegex);
+        if (pullMatch) {
+          const pullNumber = pullMatch[1];
+          const durationMin = pullMatch[2];
+          const durationSec = pullMatch[3];
           
-          // Clean up the pull name - attempt to extract boss/encounter names
-          // This is a simple heuristic that might need adjustment based on actual log formats
-          pullName = pullName
-            .replace(/pull\s*\d+/i, '') // Remove "Pull X" text
-            .replace(/\(.*?\)/, '') // Remove parenthetical comments
-            .replace(/started|beginning|starting|wipe|kill|attempt/gi, '') // Remove common status words
-            .trim();
+          // Start a new entry
+          currentEntry = {
+            name: `Pull ${pullNumber} (${durationMin}:${durationSec})`
+          };
           
-          // If cleaned up name is too short, revert to original or use generic
-          if (pullName.length < 2) {
-            pullName = beforeTime || afterTime || `Pull ${parsedEntries.length + 1}`;
+          // Look ahead for a phase indicator
+          const previousLine = i > 0 ? lines[i-1].trim() : "";
+          const phaseMatch = previousLine.match(phaseRegex);
+          
+          if (phaseMatch) {
+            currentEntry.name = `${phaseMatch[0]} - ${currentEntry.name}`;
           }
-          
-          // Add the entry
-          parsedEntries.push({
-            id: Date.now() + i.toString(),
-            name: pullName,
-            pullTime: timeString,
-          });
         }
       }
       
@@ -225,7 +225,7 @@ const WarcraftLogsToYoutubeConverter = () => {
         return {
           valid: false,
           entries: [],
-          errorMessage: "No valid timestamps found in the text"
+          errorMessage: "No valid pull data found in the text. Make sure it includes times in the format '7:46 PM'."
         };
       }
       
