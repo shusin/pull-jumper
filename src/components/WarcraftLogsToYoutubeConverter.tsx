@@ -54,6 +54,44 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
   };
 
+  // Convert user input time (possibly in 12-hour format) to 24-hour format
+  const normalizeTimeInput = (timeInput: string): string => {
+    // Basic validation
+    if (!timeInput) return "";
+
+    // Check if input already has seconds
+    const hasSeconds = timeInput.split(':').length > 2;
+    
+    try {
+      // Try to parse as HH:mm:ss first
+      if (hasSeconds) {
+        parse(timeInput, "HH:mm:ss", new Date());
+        return timeInput; // Already in correct format
+      }
+      
+      // Try to parse as HH:mm
+      try {
+        const date = parse(timeInput, "HH:mm", new Date());
+        return format(date, "HH:mm:ss");
+      } catch (e) {
+        // If that fails, assume it's h:mm format and PM (for evening raid times)
+        const timeParts = timeInput.split(':');
+        let hours = parseInt(timeParts[0]);
+        const minutes = timeParts[1] ? parseInt(timeParts[1]) : 0;
+        
+        // If hours is less than 12, assume PM (for typical raid times)
+        if (hours < 12) {
+          hours += 12;
+        }
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
+      }
+    } catch (error) {
+      // If all parsing fails, return original input
+      return timeInput;
+    }
+  };
+
   const calculateTimestamps = () => {
     if (!videoStartTime || entries.length === 0) {
       toast({
@@ -65,7 +103,9 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
 
     try {
-      const videoStart = parse(videoStartTime, "HH:mm:ss", new Date());
+      // Normalize the video start time input
+      const normalizedStartTime = normalizeTimeInput(videoStartTime);
+      const videoStart = parse(normalizedStartTime, "HH:mm:ss", new Date());
       
       const formattedEntries = entries.map((entry) => {
         const pullDateTime = parse(entry.pullTime, "HH:mm:ss", new Date());
@@ -108,13 +148,14 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
 
     try {
-      // Validate time format
-      parse(pullTime, "HH:mm:ss", new Date());
+      // Normalize and validate time format
+      const normalizedTime = normalizeTimeInput(pullTime);
+      parse(normalizedTime, "HH:mm:ss", new Date());
 
       const newEntry: TimestampEntry = {
         id: Date.now().toString(),
         name: pullName.trim(),
-        pullTime: pullTime.trim(),
+        pullTime: normalizedTime,
       };
 
       setEntries([...entries, newEntry]);
@@ -122,7 +163,7 @@ const WarcraftLogsToYoutubeConverter = () => {
       setPullTime("");
     } catch (error) {
       toast({
-        description: "Please enter time in HH:mm:ss format.",
+        description: "Please enter time in a valid format (HH:mm, H:mm, or HH:mm:ss).",
         variant: "destructive",
       });
     }
@@ -160,12 +201,19 @@ const WarcraftLogsToYoutubeConverter = () => {
       // Split text into lines
       const lines = text.split('\n');
       const parsedEntries: TimestampEntry[] = [];
-      let currentEntry: Partial<TimestampEntry> = {};
+      
+      // For collecting multi-line data
+      let currentPullNumber = "";
+      let currentPullDuration = "";
+      let currentPhase = "";
+      let currentHealth = "";
+      let currentTime = "";
       
       // Regular expressions to match patterns
       const pullNumberRegex = /^(\d+)\s+\((\d+):(\d+)\)/;  // Matches "1  (3:24)"
       const timeRegex = /(\d+):(\d+)\s+(AM|PM)/;  // Matches "7:46 PM"
       const phaseRegex = /(P\d+|I\d+)/;  // Matches "P2" or "I1" etc.
+      const healthRegex = /^(\d+)%/;  // Matches "48%"
       
       // Loop through lines to collect information
       for (let i = 0; i < lines.length; i++) {
@@ -174,7 +222,26 @@ const WarcraftLogsToYoutubeConverter = () => {
         // Skip empty lines
         if (!line) continue;
         
-        // Check for pull time (e.g., 7:46 PM)
+        // Look for health percentage
+        const healthMatch = line.match(healthRegex);
+        if (healthMatch) {
+          currentHealth = healthMatch[1] + "%";
+        }
+        
+        // Look for phase information
+        const phaseMatch = line.match(phaseRegex);
+        if (phaseMatch) {
+          currentPhase = phaseMatch[1];
+        }
+        
+        // Look for pull number and duration
+        const pullMatch = line.match(pullNumberRegex);
+        if (pullMatch) {
+          currentPullNumber = pullMatch[1];
+          currentPullDuration = `${pullMatch[2]}:${pullMatch[3]}`;
+        }
+        
+        // Look for time
         const timeMatch = line.match(timeRegex);
         if (timeMatch) {
           let hour = parseInt(timeMatch[1]);
@@ -185,38 +252,38 @@ const WarcraftLogsToYoutubeConverter = () => {
           if (ampm === "PM" && hour < 12) hour += 12;
           if (ampm === "AM" && hour === 12) hour = 0;
           
-          // Format the time in HH:mm:ss
-          const timeString = `${hour.toString().padStart(2, '0')}:${minute}:00`;
+          currentTime = `${hour.toString().padStart(2, '0')}:${minute}:00`;
           
-          // If we have an incomplete entry, add the time
-          if (currentEntry.name) {
-            currentEntry.pullTime = timeString;
-            currentEntry.id = Date.now() + i.toString();
+          // If we have all necessary information to create an entry
+          if (currentPullNumber && currentTime) {
+            // Format the pull name according to the new format: Pull X: Phase - Health% (duration)
+            let formattedName = `Pull ${currentPullNumber}`;
             
-            // Add the complete entry
-            parsedEntries.push(currentEntry as TimestampEntry);
-            currentEntry = {};
-          }
-        }
-        
-        // Check for pull number and duration
-        const pullMatch = line.match(pullNumberRegex);
-        if (pullMatch) {
-          const pullNumber = pullMatch[1];
-          const durationMin = pullMatch[2];
-          const durationSec = pullMatch[3];
-          
-          // Start a new entry
-          currentEntry = {
-            name: `Pull ${pullNumber} (${durationMin}:${durationSec})`
-          };
-          
-          // Look ahead for a phase indicator
-          const previousLine = i > 0 ? lines[i-1].trim() : "";
-          const phaseMatch = previousLine.match(phaseRegex);
-          
-          if (phaseMatch) {
-            currentEntry.name = `${phaseMatch[0]} - ${currentEntry.name}`;
+            if (currentPhase) {
+              formattedName += `: ${currentPhase}`;
+            }
+            
+            if (currentHealth) {
+              formattedName += ` - ${currentHealth}`;
+            }
+            
+            if (currentPullDuration) {
+              formattedName += ` (${currentPullDuration})`;
+            }
+            
+            // Create and add the entry
+            parsedEntries.push({
+              id: Date.now() + i.toString(),
+              name: formattedName,
+              pullTime: currentTime
+            });
+            
+            // Reset for next entry
+            currentPullNumber = "";
+            currentPullDuration = "";
+            currentPhase = "";
+            currentHealth = "";
+            currentTime = "";
           }
         }
       }
@@ -302,11 +369,11 @@ const WarcraftLogsToYoutubeConverter = () => {
             <TabsContent value="input" className="space-y-6">
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="videoStart">Video Start Time (HH:mm:ss)</Label>
+                  <Label htmlFor="videoStart">Video Start Time</Label>
                   <div className="flex mt-1.5 gap-2">
                     <Input
                       id="videoStart"
-                      placeholder="00:00:00"
+                      placeholder="7:30 or 19:30 or 19:30:00"
                       value={videoStartTime}
                       onChange={(e) => setVideoStartTime(e.target.value)}
                     />
@@ -315,7 +382,7 @@ const WarcraftLogsToYoutubeConverter = () => {
                     </Button>
                   </div>
                   <p className="text-sm text-zinc-500 mt-1.5">
-                    This is when your recording started in real time
+                    This is when your recording started in real time. For evening raid times, we'll assume PM if not specified.
                   </p>
                 </div>
 
@@ -340,7 +407,7 @@ const WarcraftLogsToYoutubeConverter = () => {
                       </div>
                       <div className="col-span-1">
                         <Input
-                          placeholder="HH:mm:ss"
+                          placeholder="Time (7:30 or 19:30)"
                           value={pullTime}
                           onChange={(e) => setPullTime(e.target.value)}
                         />
@@ -445,13 +512,14 @@ const WarcraftLogsToYoutubeConverter = () => {
                 <div>
                   <h3 className="font-medium">Step 1: Set Video Start Time</h3>
                   <p className="text-sm text-zinc-500">
-                    Enter the real-world time when you started your recording in HH:mm:ss format.
+                    Enter the real-world time when you started your recording (e.g., 7:30 or 19:30).
+                    For evening raid times, we'll assume PM if not specified.
                   </p>
                 </div>
                 <div>
                   <h3 className="font-medium">Step 2: Add Pull Times</h3>
                   <p className="text-sm text-zinc-500">
-                    Add each pull with a name and the time from Warcraftlogs in HH:mm:ss format, 
+                    Add each pull with a name and the time from Warcraftlogs,
                     or use the bulk import feature to paste text copied from Warcraftlogs.
                   </p>
                 </div>
