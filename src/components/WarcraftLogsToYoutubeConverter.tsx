@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,8 +8,8 @@ import { Label } from "@/components/ui/label";
 import { format, parse, differenceInSeconds } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
-import { Copy, Trash, Plus, Info, Play } from "lucide-react";
-import { TimestampEntry } from "@/types/timestamp";
+import { Copy, Trash, Plus, Info, Play, Clipboard } from "lucide-react";
+import { TimestampEntry, ParsedLogData } from "@/types/timestamp";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -19,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 const WarcraftLogsToYoutubeConverter = () => {
   const { toast } = useToast();
@@ -27,6 +27,8 @@ const WarcraftLogsToYoutubeConverter = () => {
   const [pullTime, setPullTime] = useState("");
   const [entries, setEntries] = useState<TimestampEntry[]>([]);
   const [infoDialogOpen, setInfoDialogOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [pastedLogs, setPastedLogs] = useState("");
   const [youtubeFormatted, setYoutubeFormatted] = useState("");
 
   const clearAll = () => {
@@ -144,19 +146,151 @@ const WarcraftLogsToYoutubeConverter = () => {
     });
   };
 
+  const parseWarcraftlogs = (text: string): ParsedLogData => {
+    if (!text.trim()) {
+      return {
+        valid: false,
+        entries: [],
+        errorMessage: "No text provided"
+      };
+    }
+
+    try {
+      // Split text into lines
+      const lines = text.split('\n');
+      const parsedEntries: TimestampEntry[] = [];
+      
+      // Regular expression to match time patterns like "20:15:30" or "8:45:12"
+      const timeRegex = /(\d{1,2}):(\d{2}):(\d{2})/;
+      
+      // Process each line
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        // Skip empty lines
+        if (!line) continue;
+        
+        // Look for time pattern
+        const timeMatch = line.match(timeRegex);
+        if (timeMatch) {
+          let pullName = "";
+          
+          // Extract hours, minutes, seconds and ensure proper formatting
+          const hours = timeMatch[1].padStart(2, '0');
+          const minutes = timeMatch[2];
+          const seconds = timeMatch[3];
+          const timeString = `${hours}:${minutes}:${seconds}`;
+          
+          // Look for potential pull name in the line
+          // First try to extract pull name before the time
+          const beforeTime = line.split(timeMatch[0])[0].trim();
+          // Then try after the time
+          const afterTime = line.split(timeMatch[0])[1]?.trim() || "";
+          
+          // Choose the most likely pull name section
+          if (beforeTime.length > 0 && beforeTime.length <= 50) {
+            // If text before time is reasonable length, use it
+            pullName = beforeTime;
+          } else if (afterTime.length > 0 && afterTime.length <= 50) {
+            // Otherwise use text after time if it exists and is reasonable
+            pullName = afterTime;
+          } else {
+            // If no good name found, use a generic name
+            pullName = `Pull ${parsedEntries.length + 1}`;
+          }
+          
+          // Clean up the pull name - attempt to extract boss/encounter names
+          // This is a simple heuristic that might need adjustment based on actual log formats
+          pullName = pullName
+            .replace(/pull\s*\d+/i, '') // Remove "Pull X" text
+            .replace(/\(.*?\)/, '') // Remove parenthetical comments
+            .replace(/started|beginning|starting|wipe|kill|attempt/gi, '') // Remove common status words
+            .trim();
+          
+          // If cleaned up name is too short, revert to original or use generic
+          if (pullName.length < 2) {
+            pullName = beforeTime || afterTime || `Pull ${parsedEntries.length + 1}`;
+          }
+          
+          // Add the entry
+          parsedEntries.push({
+            id: Date.now() + i.toString(),
+            name: pullName,
+            pullTime: timeString,
+          });
+        }
+      }
+      
+      if (parsedEntries.length === 0) {
+        return {
+          valid: false,
+          entries: [],
+          errorMessage: "No valid timestamps found in the text"
+        };
+      }
+      
+      return {
+        valid: true,
+        entries: parsedEntries
+      };
+    } catch (error) {
+      return {
+        valid: false,
+        entries: [],
+        errorMessage: "Error parsing logs"
+      };
+    }
+  };
+
+  const importPulls = () => {
+    const result = parseWarcraftlogs(pastedLogs);
+    
+    if (!result.valid) {
+      toast({
+        title: "Import failed",
+        description: result.errorMessage || "Could not parse the logs",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Add the new entries
+    setEntries([...entries, ...result.entries]);
+    
+    // Close the dialog and clear the text area
+    setBulkImportOpen(false);
+    setPastedLogs("");
+    
+    toast({
+      title: "Pulls imported",
+      description: `Successfully imported ${result.entries.length} pulls from logs.`,
+    });
+  };
+
   return (
     <div className="space-y-6">
       <Card className="overflow-hidden border-zinc-200">
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-medium">Timestamp Converter</h2>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setInfoDialogOpen(true)}
-            >
-              <Info className="h-4 w-4" />
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setBulkImportOpen(true)}
+                title="Import from Warcraftlogs"
+              >
+                <Clipboard className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setInfoDialogOpen(true)}
+                title="How to use"
+              >
+                <Info className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           <Tabs defaultValue="input">
@@ -317,7 +451,8 @@ const WarcraftLogsToYoutubeConverter = () => {
                 <div>
                   <h3 className="font-medium">Step 2: Add Pull Times</h3>
                   <p className="text-sm text-zinc-500">
-                    Add each pull with a name and the time from Warcraftlogs in HH:mm:ss format.
+                    Add each pull with a name and the time from Warcraftlogs in HH:mm:ss format, 
+                    or use the bulk import feature to paste text copied from Warcraftlogs.
                   </p>
                 </div>
                 <div>
@@ -335,6 +470,45 @@ const WarcraftLogsToYoutubeConverter = () => {
               </div>
             </DialogDescription>
           </DialogHeader>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Import from Warcraftlogs</DialogTitle>
+            <DialogDescription>
+              Paste the text copied from Warcraftlogs that contains pull times.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-2">
+            <Textarea 
+              placeholder="Paste Warcraftlogs text here..." 
+              className="min-h-[200px]"
+              value={pastedLogs}
+              onChange={(e) => setPastedLogs(e.target.value)}
+            />
+            
+            <div className="text-sm text-zinc-500 space-y-2">
+              <h4 className="font-medium">How to copy text from Warcraftlogs:</h4>
+              <ol className="list-decimal pl-5 space-y-1">
+                <li>Open your raid log on Warcraftlogs</li>
+                <li>Go to the "Fights" tab that lists all pulls</li>
+                <li>Select all text (Ctrl+A) or the section with pull times</li>
+                <li>Copy (Ctrl+C) and paste here</li>
+              </ol>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setBulkImportOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={importPulls}>
+                Import Pulls
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
