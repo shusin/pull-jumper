@@ -7,10 +7,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { format, parse, differenceInSeconds } from "date-fns";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
-import { Copy, Trash, Plus, Info, Play, Clipboard } from "lucide-react";
-import { TimestampEntry, ParsedLogData } from "@/types/timestamp";
+import { Copy, Trash, Info, Clipboard, Link } from "lucide-react";
+import { TimestampEntry, ParsedLogData, LogsApiResponse } from "@/types/timestamp";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -24,20 +23,19 @@ import { Textarea } from "@/components/ui/textarea";
 const WarcraftLogsToYoutubeConverter = () => {
   const { toast } = useToast();
   const [videoStartTime, setVideoStartTime] = useState("");
-  const [pullName, setPullName] = useState("");
-  const [pullTime, setPullTime] = useState("");
   const [entries, setEntries] = useState<TimestampEntry[]>([]);
   const [infoDialogOpen, setInfoDialogOpen] = useState(false);
-  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [pastedLogs, setPastedLogs] = useState("");
   const [youtubeFormatted, setYoutubeFormatted] = useState("");
+  const [logsUrl, setLogsUrl] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const clearAll = () => {
     setEntries([]);
     setVideoStartTime("");
-    setPullName("");
-    setPullTime("");
+    setPastedLogs("");
     setYoutubeFormatted("");
+    setLogsUrl("");
   };
 
   const formatTimeForYoutube = (seconds: number): string => {
@@ -133,37 +131,6 @@ const WarcraftLogsToYoutubeConverter = () => {
       toast({
         title: "Error calculating timestamps",
         description: "Please check your time formats and try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const addPull = () => {
-    if (!pullName.trim() || !pullTime.trim()) {
-      toast({
-        description: "Please enter both a pull name and time.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      // Normalize and validate time format
-      const normalizedTime = normalizeTimeInput(pullTime);
-      parse(normalizedTime, "HH:mm:ss", new Date());
-
-      const newEntry: TimestampEntry = {
-        id: Date.now().toString(),
-        name: pullName.trim(),
-        pullTime: normalizedTime,
-      };
-
-      setEntries([...entries, newEntry]);
-      setPullName("");
-      setPullTime("");
-    } catch (error) {
-      toast({
-        description: "Please enter time in a valid format (HH:mm, H:mm, or HH:mm:ss).",
         variant: "destructive",
       });
     }
@@ -324,8 +291,7 @@ const WarcraftLogsToYoutubeConverter = () => {
     // Add the new entries
     setEntries([...entries, ...result.entries]);
     
-    // Close the dialog and clear the text area
-    setBulkImportOpen(false);
+    // Clear the text area
     setPastedLogs("");
     
     toast({
@@ -334,21 +300,115 @@ const WarcraftLogsToYoutubeConverter = () => {
     });
   };
 
+  const fetchLogsFromUrl = async () => {
+    if (!logsUrl) {
+      toast({
+        description: "Please enter a Warcraftlogs URL",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Extract the report ID from the URL
+      // Example URL: https://www.warcraftlogs.com/reports/ABCdef123ghiJKL
+      const urlMatch = logsUrl.match(/reports\/([a-zA-Z0-9]+)/);
+      if (!urlMatch || !urlMatch[1]) {
+        throw new Error("Invalid Warcraftlogs URL format");
+      }
+      
+      const reportId = urlMatch[1];
+      const apiKey = "47758fdaa87448d975d25d5741e7cae9"; // WarcraftLogs v1 API key
+      
+      // Fetch data from the API
+      const response = await fetch(
+        `https://www.warcraftlogs.com/v1/report/fights/${reportId}?api_key=${apiKey}`
+      );
+      
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+      
+      const data = await response.json() as LogsApiResponse;
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      if (!data.fights || data.fights.length === 0) {
+        throw new Error("No fights found in the log");
+      }
+      
+      // Convert the API data to our timestamp entries format
+      const apiEntries: TimestampEntry[] = data.fights.map((fight, index) => {
+        // Convert timestamps to readable time
+        const pullDate = new Date(fight.startTime);
+        const pullTime = format(pullDate, "HH:mm:ss");
+        
+        // Calculate duration
+        const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
+        const minutes = Math.floor(durationSeconds / 60);
+        const seconds = durationSeconds % 60;
+        const durationFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        // Format the boss percentage if available
+        const bossPercentage = fight.bossPercentage 
+          ? `${Math.floor(100 - fight.bossPercentage / 100)}%` 
+          : "";
+        
+        // Format the phase if available
+        const phase = fight.lastPhaseForPercentageDisplay 
+          ? `P${fight.lastPhaseForPercentageDisplay}` 
+          : "";
+        
+        // Create the entry name
+        let entryName = `Pull ${index + 1}`;
+        if (fight.name && fight.name !== "Unknown") {
+          entryName += `: ${fight.name}`;
+        }
+        if (phase) {
+          entryName += ` ${phase}`;
+        }
+        if (bossPercentage) {
+          entryName += ` - ${bossPercentage}`;
+        }
+        entryName += ` (${durationFormatted})`;
+        
+        return {
+          id: `api-${fight.id}-${index}`,
+          name: entryName,
+          pullTime: pullTime
+        };
+      });
+      
+      setEntries([...entries, ...apiEntries]);
+      setLogsUrl("");
+      
+      toast({
+        title: "Logs imported",
+        description: `Successfully imported ${apiEntries.length} pulls from WarcraftLogs.`,
+      });
+    } catch (error) {
+      console.error("Error fetching logs:", error);
+      toast({
+        title: "Import failed",
+        description: error instanceof Error ? error.message : "Could not fetch logs from URL",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <Card className="overflow-hidden border-zinc-200">
+      <Card className="overflow-hidden border-zinc-700 bg-zinc-900">
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-medium">Timestamp Converter</h2>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setBulkImportOpen(true)}
-                title="Import from Warcraftlogs"
-              >
-                <Clipboard className="h-4 w-4" />
-              </Button>
+            <div>
               <Button
                 variant="outline"
                 size="icon"
@@ -360,223 +420,179 @@ const WarcraftLogsToYoutubeConverter = () => {
             </div>
           </div>
 
-          <Tabs defaultValue="input">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="input">Input</TabsTrigger>
-              <TabsTrigger value="output">Output</TabsTrigger>
-            </TabsList>
+          <div className="space-y-6">
+            <div>
+              <Label htmlFor="videoStart">Video Start Time</Label>
+              <div className="mt-1.5">
+                <Input
+                  id="videoStart"
+                  placeholder="7:30 or 19:30 or 19:30:00"
+                  value={videoStartTime}
+                  onChange={(e) => setVideoStartTime(e.target.value)}
+                />
+              </div>
+              <p className="text-sm text-zinc-400 mt-1.5">
+                This is when your recording started in real time. For evening raid times, we'll assume PM if not specified.
+              </p>
+            </div>
 
-            <TabsContent value="input" className="space-y-6">
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="videoStart">Video Start Time</Label>
-                  <div className="flex mt-1.5 gap-2">
-                    <Input
-                      id="videoStart"
-                      placeholder="7:30 or 19:30 or 19:30:00"
-                      value={videoStartTime}
-                      onChange={(e) => setVideoStartTime(e.target.value)}
-                    />
-                    <Button variant="outline" size="icon">
-                      <Play className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <p className="text-sm text-zinc-500 mt-1.5">
-                    This is when your recording started in real time. For evening raid times, we'll assume PM if not specified.
-                  </p>
-                </div>
+            <Separator className="bg-zinc-700" />
 
-                <Separator />
+            <div>
+              <div className="flex items-center justify-between">
+                <Label>Warcraftlogs Data</Label>
+                <Button variant="ghost" size="sm" onClick={clearAll}>
+                  Clear All
+                </Button>
+              </div>
 
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Label>Warcraftlogs Pull Times</Label>
-                    <Button variant="ghost" size="sm" onClick={clearAll}>
-                      Clear All
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 mt-3">
-                    <div className="grid grid-cols-4 gap-2">
-                      <div className="col-span-2">
-                        <Input
-                          placeholder="Pull name or boss"
-                          value={pullName}
-                          onChange={(e) => setPullName(e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-1">
-                        <Input
-                          placeholder="Time (7:30 or 19:30)"
-                          value={pullTime}
-                          onChange={(e) => setPullTime(e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-1">
-                        <Button
-                          onClick={addPull}
-                          className="w-full"
-                          variant="outline"
-                        >
-                          <Plus className="h-4 w-4 mr-1" />
-                          Add
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <ScrollArea className="h-[200px]">
-                      {entries.length === 0 ? (
-                        <div className="text-center py-8 text-zinc-400">
-                          <p>No pull times added yet</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {entries.map((entry) => (
-                            <div
-                              key={entry.id}
-                              className="flex items-center justify-between p-3 bg-zinc-50 rounded-md"
-                            >
-                              <div className="flex-1 mr-4">
-                                <p className="font-medium">{entry.name}</p>
-                                <p className="text-zinc-500 text-sm">
-                                  {entry.pullTime}
-                                </p>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => removePull(entry.id)}
-                              >
-                                <Trash className="h-4 w-4 text-zinc-400 hover:text-red-500" />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </ScrollArea>
-                  </div>
-                </div>
-
-                <div className="pt-4">
-                  <Button onClick={calculateTimestamps} className="w-full">
-                    Generate YouTube Timestamps
+              <div className="space-y-4 mt-3">
+                <div className="space-y-2">
+                  <Label htmlFor="pasteArea">Paste text from Warcraftlogs</Label>
+                  <Textarea
+                    id="pasteArea"
+                    placeholder="Paste text copied from Warcraftlogs here..."
+                    value={pastedLogs}
+                    onChange={(e) => setPastedLogs(e.target.value)}
+                    className="min-h-[100px]"
+                  />
+                  <Button 
+                    onClick={importPulls} 
+                    className="w-full"
+                    disabled={!pastedLogs.trim()}
+                  >
+                    <Clipboard className="h-4 w-4 mr-2" />
+                    Import from Pasted Text
                   </Button>
                 </div>
-              </div>
-            </TabsContent>
 
-            <TabsContent value="output" className="space-y-6">
-              <div className="space-y-4">
-                <Label htmlFor="output">YouTube Timestamps</Label>
-                <div className="relative">
-                  <ScrollArea className="h-[300px] w-full rounded-md border p-4">
-                    <pre
-                      className={cn(
-                        "whitespace-pre-wrap break-all text-sm",
-                        !youtubeFormatted && "text-zinc-400"
-                      )}
+                <div className="space-y-2">
+                  <Label htmlFor="logsUrl">Or enter a Warcraftlogs URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="logsUrl"
+                      placeholder="https://www.warcraftlogs.com/reports/..."
+                      value={logsUrl}
+                      onChange={(e) => setLogsUrl(e.target.value)}
+                    />
+                    <Button 
+                      onClick={fetchLogsFromUrl} 
+                      disabled={!logsUrl.trim() || isLoading}
                     >
-                      {youtubeFormatted || "No timestamps generated yet. Switch to the Input tab to add pull times."}
+                      <Link className="h-4 w-4 mr-2" />
+                      {isLoading ? "Loading..." : "Fetch"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <ScrollArea className="h-[200px] rounded-md border border-zinc-700 p-2">
+                  {entries.length === 0 ? (
+                    <div className="text-center py-8 text-zinc-500">
+                      <p>No pull times added yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {entries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-center justify-between p-3 bg-zinc-800 rounded-md"
+                        >
+                          <div className="flex-1 mr-4">
+                            <p className="font-medium">{entry.name}</p>
+                            <p className="text-zinc-400 text-sm">
+                              {entry.pullTime}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removePull(entry.id)}
+                          >
+                            <Trash className="h-4 w-4 text-zinc-400 hover:text-red-500" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+            </div>
+
+            <div className="pt-4">
+              <Button 
+                onClick={calculateTimestamps} 
+                className="w-full"
+                disabled={!videoStartTime || entries.length === 0}
+              >
+                Generate YouTube Timestamps
+              </Button>
+            </div>
+
+            {youtubeFormatted && (
+              <div className="space-y-4 pt-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="output">YouTube Timestamps</Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={copyToClipboard}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy
+                  </Button>
+                </div>
+                <div className="relative">
+                  <ScrollArea className="h-[200px] w-full rounded-md border border-zinc-700 p-4 bg-zinc-800">
+                    <pre className="whitespace-pre-wrap break-all text-sm text-zinc-200">
+                      {youtubeFormatted}
                     </pre>
                   </ScrollArea>
-                  {youtubeFormatted && (
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="absolute top-2 right-2"
-                      onClick={copyToClipboard}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  )}
                 </div>
-                {youtubeFormatted && (
-                  <p className="text-sm text-zinc-500">
-                    Copy these timestamps to your YouTube video description
-                  </p>
-                )}
+                <p className="text-sm text-zinc-400">
+                  Copy these timestamps to your YouTube video description
+                </p>
               </div>
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </div>
       </Card>
 
       <Dialog open={infoDialogOpen} onOpenChange={setInfoDialogOpen}>
-        <DialogContent>
+        <DialogContent className="bg-zinc-900 text-zinc-100 border-zinc-700">
           <DialogHeader>
             <DialogTitle>How to Use This Tool</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-zinc-400">
               <div className="space-y-4 mt-4">
                 <div>
-                  <h3 className="font-medium">Step 1: Set Video Start Time</h3>
-                  <p className="text-sm text-zinc-500">
+                  <h3 className="font-medium text-zinc-200">Step 1: Set Video Start Time</h3>
+                  <p className="text-sm">
                     Enter the real-world time when you started your recording (e.g., 7:30 or 19:30).
                     For evening raid times, we'll assume PM if not specified.
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-medium">Step 2: Add Pull Times</h3>
-                  <p className="text-sm text-zinc-500">
-                    Add each pull with a name and the time from Warcraftlogs,
-                    or use the bulk import feature to paste text copied from Warcraftlogs.
+                  <h3 className="font-medium text-zinc-200">Step 2: Import Pull Times</h3>
+                  <p className="text-sm">
+                    Either paste text copied from Warcraftlogs or enter a Warcraftlogs URL to import pull data.
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-medium">Step 3: Generate Timestamps</h3>
-                  <p className="text-sm text-zinc-500">
+                  <h3 className="font-medium text-zinc-200">Step 3: Generate Timestamps</h3>
+                  <p className="text-sm">
                     Click "Generate YouTube Timestamps" to calculate the timestamps for your video.
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-medium">Step 4: Copy to YouTube</h3>
-                  <p className="text-sm text-zinc-500">
+                  <h3 className="font-medium text-zinc-200">Step 4: Copy to YouTube</h3>
+                  <p className="text-sm">
                     Copy the generated timestamps to your YouTube video description.
                   </p>
                 </div>
               </div>
             </DialogDescription>
           </DialogHeader>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Import from Warcraftlogs</DialogTitle>
-            <DialogDescription>
-              Paste the text copied from Warcraftlogs that contains pull times.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 mt-2">
-            <Textarea 
-              placeholder="Paste Warcraftlogs text here..." 
-              className="min-h-[200px]"
-              value={pastedLogs}
-              onChange={(e) => setPastedLogs(e.target.value)}
-            />
-            
-            <div className="text-sm text-zinc-500 space-y-2">
-              <h4 className="font-medium">How to copy text from Warcraftlogs:</h4>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Open your raid log on Warcraftlogs</li>
-                <li>Go to the "Fights" tab that lists all pulls</li>
-                <li>Select all text (Ctrl+A) or the section with pull times</li>
-                <li>Copy (Ctrl+C) and paste here</li>
-              </ol>
-            </div>
-            
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setBulkImportOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={importPulls}>
-                Import Pulls
-              </Button>
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
     </div>
