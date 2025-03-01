@@ -342,46 +342,47 @@ const WarcraftLogsToYoutubeConverter = () => {
       }
       
       // Convert the API data to our timestamp entries format
-      const apiEntries: TimestampEntry[] = data.fights.map((fight, index) => {
-        // Convert timestamps to readable time
-        const pullDate = new Date(fight.startTime);
-        const pullTime = format(pullDate, "HH:mm:ss");
-        
-        // Calculate duration
-        const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
-        const minutes = Math.floor(durationSeconds / 60);
-        const seconds = durationSeconds % 60;
-        const durationFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-        
-        // Format the boss percentage if available
-        const bossPercentage = fight.bossPercentage 
-          ? `${Math.floor(100 - fight.bossPercentage / 100)}%` 
-          : "";
-        
-        // Format the phase if available
-        const phase = fight.lastPhaseForPercentageDisplay 
-          ? `P${fight.lastPhaseForPercentageDisplay}` 
-          : "";
-        
-        // Create the entry name
-        let entryName = `Pull ${index + 1}`;
-        if (fight.name && fight.name !== "Unknown") {
-          entryName += `: ${fight.name}`;
-        }
-        if (phase) {
-          entryName += ` ${phase}`;
-        }
-        if (bossPercentage) {
-          entryName += ` - ${bossPercentage}`;
-        }
-        entryName += ` (${durationFormatted})`;
-        
-        return {
-          id: `api-${fight.id}-${index}`,
-          name: entryName,
-          pullTime: pullTime
-        };
-      });
+      const apiEntries: TimestampEntry[] = data.fights
+        .filter(fight => fight.boss !== 0) // Filter out trash fights
+        .map((fight, index) => {
+          // Calculate the real date by adding the start_time (milliseconds) to the report start time
+          const pullTimestamp = new Date(data.start + fight.startTime);
+          const pullTime = pullTimestamp.toTimeString().split(' ')[0]; // Format as HH:MM:SS
+          
+          // Calculate duration
+          const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
+          const minutes = Math.floor(durationSeconds / 60);
+          const seconds = durationSeconds % 60;
+          const durationFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+          
+          // Format the boss percentage if available
+          const bossPercentage = fight.bossPercentage 
+            ? `${Math.floor(100 - fight.bossPercentage / 100)}%` 
+            : "";
+          
+          // Format the phase if available
+          const phase = fight.lastPhaseForPercentageDisplay 
+            ? (fight.lastPhaseIsIntermission 
+                ? `I${fight.lastPhaseForPercentageDisplay}` 
+                : `P${fight.lastPhaseForPercentageDisplay}`) 
+            : "";
+          
+          // Create the entry name
+          let entryName = `Pull ${index + 1}`;
+          if (phase) {
+            entryName += `: ${phase}`;
+          }
+          if (bossPercentage) {
+            entryName += ` - ${bossPercentage}`;
+          }
+          entryName += ` (${durationFormatted})`;
+          
+          return {
+            id: `api-${fight.id}-${index}`,
+            name: entryName,
+            pullTime: pullTime
+          };
+        });
       
       setEntries([...entries, ...apiEntries]);
       setLogsUrl("");

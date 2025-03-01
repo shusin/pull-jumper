@@ -19,6 +19,8 @@ export interface LogsApiResponse {
     endTime: number;
     bossPercentage?: number;
     lastPhaseForPercentageDisplay?: number;
+    lastPhaseIsIntermission?: boolean;
+    boss: number;
   }[];
   start: number;
   end: number;
