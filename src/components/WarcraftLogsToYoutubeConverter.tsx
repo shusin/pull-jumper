@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { format, parse, differenceInSeconds } from "date-fns";
+import { format, parse, differenceInSeconds, parseISO } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { Copy, Trash, Info, Clipboard, Link } from "lucide-react";
 import { TimestampEntry, ParsedLogData, LogsApiResponse } from "@/types/timestamp";
@@ -103,13 +103,28 @@ const WarcraftLogsToYoutubeConverter = () => {
     try {
       // Normalize the video start time input
       const normalizedStartTime = normalizeTimeInput(videoStartTime);
-      const videoStart = parse(normalizedStartTime, "HH:mm:ss", new Date());
+      
+      // Create a base date to use for all time comparisons (using today's date)
+      const today = new Date();
+      const baseDate = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate()
+      );
+      
+      // Parse video start time using the base date
+      const [startHours, startMinutes, startSeconds] = normalizedStartTime.split(':').map(Number);
+      const videoStart = new Date(baseDate);
+      videoStart.setHours(startHours, startMinutes, startSeconds || 0);
       
       const formattedEntries = entries.map((entry) => {
-        const pullDateTime = parse(entry.pullTime, "HH:mm:ss", new Date());
+        // Parse pull time using the base date for consistent comparison
+        const [pullHours, pullMinutes, pullSeconds] = entry.pullTime.split(':').map(Number);
+        const pullTime = new Date(baseDate);
+        pullTime.setHours(pullHours, pullMinutes, pullSeconds || 0);
         
         // Calculate difference in seconds between pull time and video start time
-        let diffInSeconds = differenceInSeconds(pullDateTime, videoStart);
+        let diffInSeconds = differenceInSeconds(pullTime, videoStart);
         
         // Handle times that cross midnight
         if (diffInSeconds < 0) {
@@ -128,6 +143,7 @@ const WarcraftLogsToYoutubeConverter = () => {
         description: "Your YouTube timestamps are ready to copy.",
       });
     } catch (error) {
+      console.error("Error calculating timestamps:", error);
       toast({
         title: "Error calculating timestamps",
         description: "Please check your time formats and try again.",
