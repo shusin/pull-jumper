@@ -29,6 +29,7 @@ const WarcraftLogsToYoutubeConverter = () => {
   const [youtubeFormatted, setYoutubeFormatted] = useState("");
   const [logsUrl, setLogsUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [logStartDate, setLogStartDate] = useState<Date | null>(null);
 
   const clearAll = () => {
     setEntries([]);
@@ -36,6 +37,7 @@ const WarcraftLogsToYoutubeConverter = () => {
     setPastedLogs("");
     setYoutubeFormatted("");
     setLogsUrl("");
+    setLogStartDate(null);
   };
 
   const formatTimeForYoutube = (seconds: number): string => {
@@ -104,13 +106,9 @@ const WarcraftLogsToYoutubeConverter = () => {
       // Normalize the video start time input
       const normalizedStartTime = normalizeTimeInput(videoStartTime);
       
-      // Create a base date to use for all time comparisons (using today's date)
-      const today = new Date();
-      const baseDate = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate()
-      );
+      // Create a base date to use for all time comparisons
+      // If we have a log start date from API, use that, otherwise use today
+      const baseDate = logStartDate ? new Date(logStartDate) : new Date();
       
       // Parse video start time using the base date
       const [startHours, startMinutes, startSeconds] = normalizedStartTime.split(':').map(Number);
@@ -357,13 +355,27 @@ const WarcraftLogsToYoutubeConverter = () => {
         throw new Error("No fights found in the log");
       }
       
+      // Create a date object from the start timestamp (in milliseconds)
+      const logStartDateObj = new Date(data.start);
+      setLogStartDate(logStartDateObj);
+      
+      console.log("Log start date:", logStartDateObj);
+      console.log("Log start time:", logStartDateObj.toTimeString());
+      
       // Convert the API data to our timestamp entries format
       const apiEntries: TimestampEntry[] = data.fights
         .filter(fight => fight.boss !== 0) // Filter out trash fights
         .map((fight, index) => {
           // Calculate the real date by adding the start_time (milliseconds) to the report start time
           const pullTimestamp = new Date(data.start + fight.startTime);
-          const pullTime = pullTimestamp.toTimeString().split(' ')[0]; // Format as HH:MM:SS
+          
+          // Format as HH:MM:SS
+          const hours = pullTimestamp.getHours();
+          const minutes = pullTimestamp.getMinutes();
+          const seconds = pullTimestamp.getSeconds();
+          const pullTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          
+          console.log(`Pull ${index + 1} timestamp:`, pullTimestamp.toTimeString());
           
           // Calculate duration
           const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
