@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,32 +53,25 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
   };
 
-  // Convert user input time (possibly in 12-hour format) to 24-hour format
   const normalizeTimeInput = (timeInput: string): string => {
-    // Basic validation
     if (!timeInput) return "";
 
-    // Check if input already has seconds
     const hasSeconds = timeInput.split(':').length > 2;
     
     try {
-      // Try to parse as HH:mm:ss first
       if (hasSeconds) {
         parse(timeInput, "HH:mm:ss", new Date());
-        return timeInput; // Already in correct format
+        return timeInput;
       }
       
-      // Try to parse as HH:mm
       try {
         const date = parse(timeInput, "HH:mm", new Date());
         return format(date, "HH:mm:ss");
       } catch (e) {
-        // If that fails, assume it's h:mm format and PM (for evening raid times)
         const timeParts = timeInput.split(':');
         let hours = parseInt(timeParts[0]);
         const minutes = timeParts[1] ? parseInt(timeParts[1]) : 0;
         
-        // If hours is less than 12, assume PM (for typical raid times)
         if (hours < 12) {
           hours += 12;
         }
@@ -87,7 +79,6 @@ const WarcraftLogsToYoutubeConverter = () => {
         return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
       }
     } catch (error) {
-      // If all parsing fails, return original input
       return timeInput;
     }
   };
@@ -103,33 +94,25 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
 
     try {
-      // Normalize the video start time input
       const normalizedStartTime = normalizeTimeInput(videoStartTime);
       
-      // Create a base date to use for all time comparisons
-      // If we have a log start date from API, use that, otherwise use today
       const baseDate = logStartDate ? new Date(logStartDate) : new Date();
       
-      // Parse video start time using the base date
       const [startHours, startMinutes, startSeconds] = normalizedStartTime.split(':').map(Number);
       const videoStart = new Date(baseDate);
       videoStart.setHours(startHours, startMinutes, startSeconds || 0);
       
       const formattedEntries = entries.map((entry) => {
-        // Parse pull time using the base date for consistent comparison
         const [pullHours, pullMinutes, pullSeconds] = entry.pullTime.split(':').map(Number);
         const pullTime = new Date(baseDate);
         pullTime.setHours(pullHours, pullMinutes, pullSeconds || 0);
         
-        // Calculate difference in seconds between pull time and video start time
         let diffInSeconds = differenceInSeconds(pullTime, videoStart);
         
-        // Handle times that cross midnight
         if (diffInSeconds < 0) {
           diffInSeconds = diffInSeconds + 24 * 60 * 60;
         }
         
-        // Format for YouTube
         const youtubeTimestamp = formatTimeForYoutube(diffInSeconds);
         return `${youtubeTimestamp} ${entry.name}`;
       }).join("\n");
@@ -179,65 +162,53 @@ const WarcraftLogsToYoutubeConverter = () => {
     }
 
     try {
-      // Split text into lines
       const lines = text.split('\n');
       const parsedEntries: TimestampEntry[] = [];
       
-      // For collecting multi-line data
       let currentPullNumber = "";
       let currentPullDuration = "";
       let currentPhase = "";
       let currentHealth = "";
       let currentTime = "";
       
-      // Regular expressions to match patterns
-      const pullNumberRegex = /^(\d+)\s+\((\d+):(\d+)\)/;  // Matches "1  (3:24)"
-      const timeRegex = /(\d+):(\d+)\s+(AM|PM)/;  // Matches "7:46 PM"
-      const phaseRegex = /(P\d+|I\d+)/;  // Matches "P2" or "I1" etc.
-      const healthRegex = /^(\d+)%/;  // Matches "48%"
+      const pullNumberRegex = /^(\d+)\s+\((\d+):(\d+)\)/;
+      const timeRegex = /(\d+):(\d+)\s+(AM|PM)/;
+      const phaseRegex = /(P\d+|I\d+)/;
+      const healthRegex = /^(\d+)%/;
       
-      // Loop through lines to collect information
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         
-        // Skip empty lines
         if (!line) continue;
         
-        // Look for health percentage
         const healthMatch = line.match(healthRegex);
         if (healthMatch) {
           currentHealth = healthMatch[1] + "%";
         }
         
-        // Look for phase information
         const phaseMatch = line.match(phaseRegex);
         if (phaseMatch) {
           currentPhase = phaseMatch[1];
         }
         
-        // Look for pull number and duration
         const pullMatch = line.match(pullNumberRegex);
         if (pullMatch) {
           currentPullNumber = pullMatch[1];
           currentPullDuration = `${pullMatch[2]}:${pullMatch[3]}`;
         }
         
-        // Look for time
         const timeMatch = line.match(timeRegex);
         if (timeMatch) {
           let hour = parseInt(timeMatch[1]);
           const minute = timeMatch[2];
           const ampm = timeMatch[3];
           
-          // Convert to 24-hour format
           if (ampm === "PM" && hour < 12) hour += 12;
           if (ampm === "AM" && hour === 12) hour = 0;
           
           currentTime = `${hour.toString().padStart(2, '0')}:${minute}:00`;
           
-          // If we have all necessary information to create an entry
           if (currentPullNumber && currentTime) {
-            // Format the pull name according to the new format: Pull X: Phase - Health% (duration)
             let formattedName = `Pull ${currentPullNumber}`;
             
             if (currentPhase) {
@@ -252,14 +223,12 @@ const WarcraftLogsToYoutubeConverter = () => {
               formattedName += ` (${currentPullDuration})`;
             }
             
-            // Create and add the entry
             parsedEntries.push({
               id: Date.now() + i.toString(),
               name: formattedName,
               pullTime: currentTime
             });
             
-            // Reset for next entry
             currentPullNumber = "";
             currentPullDuration = "";
             currentPhase = "";
@@ -302,10 +271,7 @@ const WarcraftLogsToYoutubeConverter = () => {
       return;
     }
     
-    // Add the new entries
     setEntries([...entries, ...result.entries]);
-    
-    // Clear the text area
     setPastedLogs("");
     
     toast({
@@ -326,17 +292,14 @@ const WarcraftLogsToYoutubeConverter = () => {
     setIsLoading(true);
 
     try {
-      // Extract the report ID from the URL
-      // Example URL: https://www.warcraftlogs.com/reports/ABCdef123ghiJKL
       const urlMatch = logsUrl.match(/reports\/([a-zA-Z0-9]+)/);
       if (!urlMatch || !urlMatch[1]) {
         throw new Error("Invalid Warcraftlogs URL format");
       }
       
       const reportId = urlMatch[1];
-      const apiKey = "47758fdaa87448d975d25d5741e7cae9"; // WarcraftLogs v1 API key
+      const apiKey = "47758fdaa87448d975d25d5741e7cae9";
       
-      // Fetch data from the API
       const response = await fetch(
         `https://www.warcraftlogs.com/v1/report/fights/${reportId}?api_key=${apiKey}`
       );
@@ -355,47 +318,39 @@ const WarcraftLogsToYoutubeConverter = () => {
         throw new Error("No fights found in the log");
       }
       
-      // Create a date object from the start timestamp (in milliseconds)
       const logStartDateObj = new Date(data.start);
       setLogStartDate(logStartDateObj);
       
       console.log("Log start date:", logStartDateObj);
       console.log("Log start time:", logStartDateObj.toTimeString());
       
-      // Convert the API data to our timestamp entries format
       const apiEntries: TimestampEntry[] = data.fights
-        .filter(fight => fight.boss !== 0) // Filter out trash fights
+        .filter(fight => fight.boss !== 0)
         .map((fight, index) => {
-          // Calculate the real date by adding the start_time (milliseconds) to the report start time
           const pullTimestamp = new Date(data.start + fight.startTime);
           
-          // Format as HH:MM:SS
-          const hours = pullTimestamp.getHours();
-          const minutes = pullTimestamp.getMinutes();
-          const seconds = pullTimestamp.getSeconds();
-          const pullTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          const pullHours = pullTimestamp.getHours();
+          const pullMinutes = pullTimestamp.getMinutes();
+          const pullSeconds = pullTimestamp.getSeconds();
+          const pullTime = `${pullHours.toString().padStart(2, '0')}:${pullMinutes.toString().padStart(2, '0')}:${pullSeconds.toString().padStart(2, '0')}`;
           
           console.log(`Pull ${index + 1} timestamp:`, pullTimestamp.toTimeString());
           
-          // Calculate duration
           const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
-          const minutes = Math.floor(durationSeconds / 60);
-          const seconds = durationSeconds % 60;
-          const durationFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+          const durationMinutes = Math.floor(durationSeconds / 60);
+          const durationRemainingSeconds = durationSeconds % 60;
+          const durationFormatted = `${durationMinutes}:${durationRemainingSeconds.toString().padStart(2, '0')}`;
           
-          // Format the boss percentage if available
           const bossPercentage = fight.bossPercentage 
             ? `${Math.floor(100 - fight.bossPercentage / 100)}%` 
             : "";
           
-          // Format the phase if available
           const phase = fight.lastPhaseForPercentageDisplay 
             ? (fight.lastPhaseIsIntermission 
                 ? `I${fight.lastPhaseForPercentageDisplay}` 
                 : `P${fight.lastPhaseForPercentageDisplay}`) 
             : "";
           
-          // Create the entry name
           let entryName = `Pull ${index + 1}`;
           if (phase) {
             entryName += `: ${phase}`;
