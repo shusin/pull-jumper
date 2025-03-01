@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -5,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { format, parse, differenceInSeconds, parseISO } from "date-fns";
+import { format, parse, differenceInSeconds } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { Copy, Trash, Info, Clipboard, Link } from "lucide-react";
 import { TimestampEntry, ParsedLogData, LogsApiResponse } from "@/types/timestamp";
@@ -96,25 +97,50 @@ const WarcraftLogsToYoutubeConverter = () => {
     try {
       const normalizedStartTime = normalizeTimeInput(videoStartTime);
       
-      const baseDate = logStartDate ? new Date(logStartDate) : new Date();
+      // Create a base date - use log start date if available
+      const baseDate = new Date();
+      if (logStartDate) {
+        baseDate.setFullYear(logStartDate.getFullYear(), logStartDate.getMonth(), logStartDate.getDate());
+      }
       
+      // Parse video start time
       const [startHours, startMinutes, startSeconds] = normalizedStartTime.split(':').map(Number);
       const videoStart = new Date(baseDate);
       videoStart.setHours(startHours, startMinutes, startSeconds || 0);
       
+      console.log("Video start calculated as:", videoStart.toISOString());
+      
       const formattedEntries = entries.map((entry) => {
-        const [pullHours, pullMinutes, pullSeconds] = entry.pullTime.split(':').map(Number);
-        const pullTime = new Date(baseDate);
-        pullTime.setHours(pullHours, pullMinutes, pullSeconds || 0);
-        
-        let diffInSeconds = differenceInSeconds(pullTime, videoStart);
-        
-        if (diffInSeconds < 0) {
-          diffInSeconds = diffInSeconds + 24 * 60 * 60;
+        try {
+          // Parse pull time from entry
+          const [pullHours, pullMinutes, pullSeconds] = entry.pullTime.split(':').map(Number);
+          
+          // Create pull date with same date as base date
+          const pullTime = new Date(baseDate);
+          pullTime.setHours(pullHours, pullMinutes, pullSeconds || 0);
+          
+          console.log(`Processing entry ${entry.name}:`, pullTime.toISOString());
+          
+          // Calculate difference in seconds
+          let diffInSeconds = differenceInSeconds(pullTime, videoStart);
+          
+          // Handle edge case where pull is on next day (after midnight)
+          if (diffInSeconds < 0 && pullHours < startHours) {
+            const nextDayPullTime = new Date(pullTime);
+            nextDayPullTime.setDate(nextDayPullTime.getDate() + 1);
+            diffInSeconds = differenceInSeconds(nextDayPullTime, videoStart);
+          }
+          
+          // Format the timestamp for YouTube
+          const youtubeTimestamp = formatTimeForYoutube(Math.max(0, diffInSeconds));
+          
+          console.log(`Calculated timestamp for ${entry.name}: ${youtubeTimestamp} (${diffInSeconds} seconds difference)`);
+          
+          return `${youtubeTimestamp} ${entry.name}`;
+        } catch (error) {
+          console.error(`Error processing entry ${entry.name}:`, error);
+          return `Error ${entry.name}`;
         }
-        
-        const youtubeTimestamp = formatTimeForYoutube(diffInSeconds);
-        return `${youtubeTimestamp} ${entry.name}`;
       }).join("\n");
 
       setYoutubeFormatted(formattedEntries);
@@ -318,23 +344,23 @@ const WarcraftLogsToYoutubeConverter = () => {
         throw new Error("No fights found in the log");
       }
       
+      // Store the log start date for later use in timestamp calculations
       const logStartDateObj = new Date(data.start);
       setLogStartDate(logStartDateObj);
       
-      console.log("Log start date:", logStartDateObj);
-      console.log("Log start time:", logStartDateObj.toTimeString());
+      console.log("Log start date:", logStartDateObj.toISOString());
       
       const apiEntries: TimestampEntry[] = data.fights
         .filter(fight => fight.boss !== 0)
         .map((fight, index) => {
-          const pullTimestamp = new Date(data.start + fight.startTime);
+          const fightStartTime = new Date(data.start + fight.startTime);
           
-          const pullHours = pullTimestamp.getHours();
-          const pullMinutes = pullTimestamp.getMinutes();
-          const pullSeconds = pullTimestamp.getSeconds();
+          console.log(`Raw fight ${index + 1} timestamp:`, fightStartTime.toISOString());
+          
+          const pullHours = fightStartTime.getHours();
+          const pullMinutes = fightStartTime.getMinutes();
+          const pullSeconds = fightStartTime.getSeconds();
           const pullTime = `${pullHours.toString().padStart(2, '0')}:${pullMinutes.toString().padStart(2, '0')}:${pullSeconds.toString().padStart(2, '0')}`;
-          
-          console.log(`Pull ${index + 1} timestamp:`, pullTimestamp.toTimeString());
           
           const durationSeconds = Math.floor((fight.endTime - fight.startTime) / 1000);
           const durationMinutes = Math.floor(durationSeconds / 60);
@@ -359,6 +385,8 @@ const WarcraftLogsToYoutubeConverter = () => {
             entryName += ` - ${bossPercentage}`;
           }
           entryName += ` (${durationFormatted})`;
+          
+          console.log(`Processed fight ${index + 1}: ${entryName} at ${pullTime}`);
           
           return {
             id: `api-${fight.id}-${index}`,
